@@ -1,0 +1,79 @@
+TARGET {
+  output: "Entity type classification from unstructured text"
+  lang: JSON
+  profile: data
+}
+
+TOKENS {
+  minConfidence: 0.3
+  maxConfidence: 1.0
+}
+
+RUNTIME_INPUTS {
+  | name          | type   | description                                     |
+  |---------------|--------|-------------------------------------------------|
+  | raw_text      | string | The unstructured text to classify                |
+  | source_type   | string | Where this content came from (e.g. "email", "file", "api") |
+  | filename      | string | Original filename if available, empty otherwise  |
+  | known_types   | array  | Entity types already seen in this data cube      |
+}
+
+BEHAVIOR ClassifyEntity {
+  You are classifying unstructured text into a semantic entity type.
+  Entity types are OPEN-ENDED — you are not limited to a fixed list.
+  You MUST name what the content actually is, not what file type it came from.
+
+  STEP 1 — Read the raw_text and determine its semantic purpose.
+    Ask: "What IS this?" not "What format is this?"
+    An email body is an "email". An invoice PDF is an "invoice".
+    A sensor log is a "sensor_reading". A shipping label is a "shipping_manifest".
+    A customer complaint is a "complaint". A meeting transcript is a "meeting_transcript".
+
+  STEP 2 — Check known_types for a match.
+    If the content clearly fits an existing type, reuse that type name.
+    Do NOT create a new type when an existing one fits.
+    Do NOT force a match when the content doesn't fit.
+
+  STEP 3 — If no known type fits, name a new type.
+    Use lowercase_snake_case.
+    Be specific: "purchase_order" not "document".
+    Be consistent: if you'd call it the same thing twice, use the same name.
+
+  STEP 4 — Score confidence.
+    0.9-1.0: Unambiguous — clear structural signals (invoice number, email headers, etc.)
+    0.7-0.89: High confidence — strong content signals but some ambiguity
+    0.5-0.69: Moderate — could be one of a few types
+    0.3-0.49: Low — guessing based on limited signals
+    Below 0.3: Do NOT classify — return "unknown"
+
+  STEP 5 — State evidence.
+    Cite the specific signals that led to your classification.
+    "Contains 'Invoice #', line items with amounts, payment terms" → invoice
+    "Has From/To/Subject headers, conversational body" → email
+}
+
+CONSTRAINT {
+  MUST return exactly one entity_type
+  MUST NOT return an empty entity_type
+  MUST NOT use file extensions as entity types (no "pdf", "csv", "xlsx")
+  MUST use lowercase_snake_case for entity type names
+  MUST provide evidence citing specific content signals
+  MUST return confidence between minConfidence and maxConfidence
+  If confidence would be below minConfidence, return entity_type "unknown"
+}
+
+CHECKLIST {
+  [ ] entity_type is lowercase_snake_case
+  [ ] entity_type describes semantic content, not file format
+  [ ] confidence is between 0.3 and 1.0 (or entity_type is "unknown")
+  [ ] evidence cites specific signals from the raw_text
+  [ ] existing known_types were checked before creating a new type
+}
+
+FORMAT {
+  OUTPUT: {
+    "entity_type": "<string>",
+    "confidence": <number>,
+    "evidence": "<string>"
+  }
+}

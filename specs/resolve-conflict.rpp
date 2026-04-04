@@ -1,0 +1,77 @@
+TARGET {
+  output: "Conflict resolution between two values for the same field"
+  lang: JSON
+  profile: data
+}
+
+TOKENS {
+  escalateThreshold: 0.5
+}
+
+RUNTIME_INPUTS {
+  | name              | type   | description                                          |
+  |-------------------|--------|------------------------------------------------------|
+  | field_name        | string | The field with conflicting values                    |
+  | new_value         | any    | The value from the newly extracted entity            |
+  | existing_value    | any    | The value currently in the data cube                 |
+  | new_source        | object | Source metadata for the new value                    |
+  | existing_source   | object | Source metadata for the existing value                |
+  | entity_type       | string | The entity type this conflict occurs on              |
+  | trust_memory      | string | Agent's learned trust hierarchy from memory          |
+}
+
+BEHAVIOR ResolveConflict {
+  Two sources disagree on the same field. You must resolve or escalate.
+
+  STEP 1 — Assess the conflict.
+    Are the values actually different, or just differently formatted?
+    "$4,200" and "4200" and "4200.00" are the same value.
+    "John Smith" and "J. Smith" might be the same person.
+    If values are equivalent after normalization, return resolution "equivalent".
+
+  STEP 2 — Check trust_memory.
+    The agent may have learned which sources are more reliable for which fields.
+    "Source A is authoritative for amounts" → Source A wins on amount conflicts.
+    "Source B has stale data" → Source B loses.
+    If trust_memory has guidance, follow it.
+
+  STEP 3 — Apply resolution strategies (in order):
+    1. Trust hierarchy from memory (if available)
+    2. Recency — more recent extraction wins (check source.extracted_at)
+    3. Specificity — more detailed/complete value wins
+    4. Escalate — if none of the above resolves it
+
+  STEP 4 — Score confidence in resolution.
+    High (0.8+): Trust hierarchy explicitly covers this case
+    Medium (0.5-0.79): Recency or specificity provides a reasonable answer
+    Low (<0.5): MUST escalate — don't resolve when unsure
+}
+
+CONSTRAINT {
+  MUST check for format equivalence before declaring a real conflict
+  MUST check trust_memory before applying default strategies
+  MUST escalate if confidence is below escalateThreshold
+  MUST preserve BOTH values in the output (winner and loser)
+  MUST NOT silently discard any value
+  MUST state the resolution strategy used
+}
+
+CHECKLIST {
+  [ ] Format equivalence checked first
+  [ ] trust_memory consulted before default strategies
+  [ ] Both values preserved in output
+  [ ] Resolution strategy explicitly stated
+  [ ] Confidence below escalateThreshold triggers escalation
+  [ ] Reasoning explains WHY one value wins
+}
+
+FORMAT {
+  OUTPUT: {
+    "resolution": "new_wins | existing_wins | equivalent | escalate",
+    "winning_value": "<the value to keep>",
+    "losing_value": "<the value to demote>",
+    "confidence": <number>,
+    "strategy": "<which strategy resolved it>",
+    "reasoning": "<why this resolution>"
+  }
+}

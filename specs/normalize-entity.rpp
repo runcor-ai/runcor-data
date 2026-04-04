@@ -1,0 +1,88 @@
+TARGET {
+  output: "Normalized structured fields extracted from unstructured content"
+  lang: JSON
+  profile: data
+}
+
+TOKENS {
+  maxFields: 20
+  minConfidence: 0.3
+}
+
+RUNTIME_INPUTS {
+  | name            | type   | description                                          |
+  |-----------------|--------|------------------------------------------------------|
+  | raw_text        | string | The unstructured text to extract fields from          |
+  | entity_type     | string | The classified entity type                           |
+  | learned_fields  | array  | Fields previously extracted for this entity type      |
+  | agent_memory    | string | Relevant operational learnings about this entity type |
+}
+
+BEHAVIOR NormalizeEntity {
+  You are extracting structured fields from unstructured text.
+  The fields you extract are DYNAMIC — determined by the entity type and content.
+  There is no predefined schema. You figure out what matters.
+
+  STEP 1 — Check learned_fields.
+    If previous extractions for this entity_type exist, use the same field names.
+    Consistency matters — "vendor_name" should stay "vendor_name", not become "supplier".
+
+  STEP 2 — Extract meaningful fields.
+    Read the raw_text and identify every distinct piece of structured information.
+    Dates → ISO 8601 format (YYYY-MM-DD or YYYY-MM-DDTHH:mm:ssZ)
+    Currency → numeric value + currency code (e.g. { "amount": 4200, "currency": "USD" })
+    Names → canonical form (trim whitespace, consistent capitalization)
+    Addresses → structured components if possible
+    Enums/statuses → lowercase_snake_case
+
+  STEP 3 — Name each field.
+    Use lowercase_snake_case.
+    Be descriptive: "due_date" not "date2", "vendor_name" not "name1".
+    Match learned_fields names when the meaning is the same.
+
+  STEP 4 — Determine a canonical name for the entity.
+    This is the primary human-readable identifier.
+    For an invoice: "Invoice #4821 - Marketplace Corp"
+    For a person: "Sarah Chen"
+    For an email: subject line or first meaningful line
+
+  STEP 5 — Score confidence.
+    Per-field confidence where extraction is uncertain.
+    Overall confidence reflects how complete the extraction is.
+
+  STEP 6 — Apply agent_memory.
+    If memory says "this source has trailing whitespace" — trim it.
+    If memory says "date column is Unix timestamps" — convert.
+    If memory says "vendor X uses alias Y" — normalize.
+}
+
+CONSTRAINT {
+  MUST extract AT LEAST one field
+  MUST NOT extract more than maxFields fields
+  MUST use lowercase_snake_case for field names
+  MUST normalize dates to ISO 8601
+  MUST normalize currency to numeric + code
+  MUST match learned_fields names when meaning is the same
+  MUST NOT fabricate values not present in raw_text
+  MUST provide a canonical_name
+}
+
+CHECKLIST {
+  [ ] All field names are lowercase_snake_case
+  [ ] Dates are ISO 8601
+  [ ] Currency values are numeric (not string "$4,200")
+  [ ] canonical_name is human-readable and identifies the entity
+  [ ] No fabricated values — everything traceable to raw_text
+  [ ] learned_fields names reused where applicable
+}
+
+FORMAT {
+  OUTPUT: {
+    "canonical_name": "<string>",
+    "structured": { "<field_name>": "<value>", ... },
+    "confidence": <number>,
+    "field_notes": [
+      { "field": "<name>", "confidence": <number>, "note": "<extraction note>" }
+    ]
+  }
+}

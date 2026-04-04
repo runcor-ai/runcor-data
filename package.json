@@ -1,0 +1,33 @@
+{
+  "name": "runcor-data",
+  "version": "0.1.0",
+  "description": "Data agent and data cube for the runcor AI runtime",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "engines": {
+    "node": ">=20.6.0"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "tsx tests/test-database.ts",
+    "test:cube": "tsx --env-file=.env tests/test-data-cube.ts",
+    "test:pipeline": "tsx --env-file=.env tests/test-pipeline.ts"
+  },
+  "keywords": ["runcor", "data", "ai", "agents", "data-cube"],
+  "license": "MIT",
+  "author": "runcor <hello@runcor.ai>",
+  "dependencies": {
+    "better-sqlite3": "^12.6.2",
+    "runcor-memory": "github:runcor-ai/runcor-memory"
+  },
+  "peerDependencies": {
+    "runcor": "github:runcor-ai/runcor"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^25.3.2",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}

@@ -1,0 +1,80 @@
+TARGET {
+  output: "Entity resolution decision — are two entities the same thing?"
+  lang: JSON
+  profile: data
+}
+
+TOKENS {
+  minMatchConfidence: 0.6
+  maxMatches: 5
+}
+
+RUNTIME_INPUTS {
+  | name              | type   | description                                       |
+  |-------------------|--------|---------------------------------------------------|
+  | new_entity        | object | The newly extracted entity (type, structured, content) |
+  | candidates        | array  | Existing entities from the data cube that might match  |
+  | entity_type       | string | The entity type being resolved                    |
+}
+
+BEHAVIOR ResolveEntity {
+  You are determining whether a newly extracted entity matches any existing entity
+  in the data cube. This is cross-source entity resolution.
+
+  STEP 1 — Compare key fields.
+    For each candidate, compare structured fields that should be unique identifiers:
+    - Invoice numbers, order IDs, email addresses, phone numbers → exact match
+    - Names → fuzzy match (case-insensitive, handle aliases)
+    - Dates → exact match on normalized values
+    - Amounts → exact match or within rounding tolerance
+
+  STEP 2 — Score each candidate.
+    1.0: Exact identifier match (same invoice number, same email address)
+    0.8-0.99: Strong field overlap with no contradictions
+    0.6-0.79: Partial match — some fields agree, some missing
+    Below 0.6: Not a match — different entities
+
+  STEP 3 — Determine edge type for matches.
+    "supersedes" — new entity is a newer version of the existing one
+    "references" — new entity mentions or links to the existing one
+    "belongs_to" — new entity is a child/component of the existing one
+    "related" — entities are connected but neither contains the other
+
+  STEP 4 — Handle contradictions.
+    If matching entities have conflicting field values, note the contradiction.
+    This does NOT prevent a match — the same invoice from two sources may have different amounts.
+    Flag contradictions for the conflict stage.
+}
+
+CONSTRAINT {
+  MUST compare at least the key identifying fields
+  MUST NOT match below minMatchConfidence
+  MUST NOT return more than maxMatches matches
+  MUST state specific evidence for each match
+  MUST flag any field contradictions between matched entities
+  MUST NOT assume a match based solely on entity_type
+}
+
+CHECKLIST {
+  [ ] Each match has a confidence score >= minMatchConfidence
+  [ ] Each match has an edge_type
+  [ ] Each match has specific evidence (which fields matched)
+  [ ] Contradictions between matched entities are flagged
+  [ ] No matches based solely on type — specific field evidence required
+}
+
+FORMAT {
+  OUTPUT: {
+    "matches": [
+      {
+        "candidate_id": "<string>",
+        "confidence": <number>,
+        "edge_type": "<string>",
+        "evidence": "<string>",
+        "contradictions": [
+          { "field": "<name>", "new_value": "<value>", "existing_value": "<value>" }
+        ]
+      }
+    ]
+  }
+}
