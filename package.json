@@ -10,7 +10,11 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "tsx tests/test-database.ts",
+    "test": "tsx tests/run-all.ts",
+    "test:database": "tsx tests/test-database.ts",
+    "test:cycle-aware": "tsx tests/test-cycle-aware.ts",
+    "test:conflict-persistence": "tsx tests/test-conflict-persistence.ts",
+    "test:reality-slice": "tsx tests/test-reality-slice.ts",
     "test:cube": "tsx --env-file=.env tests/test-data-cube.ts",
     "test:pipeline": "tsx --env-file=.env tests/test-pipeline.ts"
   },
