@@ -1,7 +1,7 @@
 {
   "name": "runcor-data",
-  "version": "0.1.0",
-  "description": "Data agent and data cube for the runcor AI runtime",
+  "version": "0.2.0",
+  "description": "Data agent and data cube for the runcor AI runtime. v0.2.0 adds V2-shape surface (Entity/Edge/Conflict, persisted conflicts, RealitySlice with rendered text, cycle-aware ingest).",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
