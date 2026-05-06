@@ -1,5 +1,6 @@
 // Data Agent — full cognitive agent with 3-cube architecture
 
+import type { CognitiveMemoryAccessor } from 'runcor-memory';
 import type { DataCube } from './data-cube.js';
 import type { RawContent, DataAgentConfig, ModelComplete, PipelineResult } from './types.js';
 import { runPipeline } from './pipeline.js';
@@ -25,10 +26,10 @@ export function createDataAgent(
   model: ModelComplete,
   config?: DataAgentConfig,
 ): DataAgent {
-  let cognitiveMemory: Awaited<ReturnType<typeof initMemory>> | null = null;
+  let cognitiveMemory: CognitiveMemoryAccessor | null = null;
   let currentCycle = 0;
 
-  async function initMemory() {
+  async function initMemory(): Promise<CognitiveMemoryAccessor> {
     if (cognitiveMemory) return cognitiveMemory;
     const { createCognitiveMemory } = await import('runcor-memory');
     const mem = createCognitiveMemory({
