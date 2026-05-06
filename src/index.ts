@@ -34,4 +34,15 @@ export type {
   GraphResult,
   ModelComplete,
   DataAgentConfig,
+  // V2-002 shape (additive):
+  AttributeValue,
+  ProvenanceRecord,
+  Entity,
+  Edge,
+  Conflict,
+  RealitySlice,
+  IngestInput,
+  IngestResult,
+  DataCubeStats,
+  RealityQueryInput,
 } from './types.js';

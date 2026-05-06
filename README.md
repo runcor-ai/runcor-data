@@ -2,6 +2,8 @@
 
 Data agent and data cube for the [runcor](https://github.com/runcor-ai/runcor) AI runtime. Takes unstructured data and adds structure so it's meaningful to the system.
 
+> **v0.2.0 — V2-002 shape alignment.** Adds the V2-shape surface alongside the existing v0.1.x primitives: `Entity` (with `name`, per-attribute `attributes`, `provenance`, cycle-aware tracking), `Edge` (V2 naming: `fromEntityId`/`toEntityId`/`relation`), persisted `Conflict` (FR-082), `RealitySlice` (with pre-rendered text for substrate's RealityLayer), and `DataCube.ingest(input: IngestInput)` for cycle-aware ingestion. Schema migrates idempotently — existing v0.1.x rows continue to work, with cycle metadata defaulting to `-1` until updated. See [V2-002 surface](#v2-002-surface) below.
+
 ## What it does
 
 runcor-data is a full cognitive agent that ingests unstructured content (emails, PDFs, API responses, CSV files — anything) and turns it into structured, queryable knowledge in a graph database called the data cube.
@@ -81,6 +83,81 @@ dataCube.addEdge(edge)                  // Add relationship
 dataCube.update(id, updates)            // Update entity (increments version)
 ```
 
+## V2-002 surface
+
+The v0.2.0 release adds a parallel V2-shape surface for callers consuming runcor-data via the substrate's RealityLayer pipeline. Existing v0.1.x methods (`search`, `getById`, `query(naturalLanguage)`, `persist`, `addEdge`, `update`, `getConflicts`) are preserved unchanged.
+
+### V2 types
+
+```typescript
+interface Entity {
+  id: string;
+  name: string;                                      // derived from structured.name|title or content
+  type: string;
+  attributes: Record<string, AttributeValue>;        // per-attribute provenance
+  provenance: ProvenanceRecord[];
+  createdAtCycle: number;                            // V2 cycle counter (-1 for legacy rows)
+  lastUpdatedCycle: number;
+}
+
+interface AttributeValue { value: unknown; source: string; cycle: number }
+
+interface Edge {
+  id: string;
+  fromEntityId: string;                              // V2 naming (vs v0.1.x's from_id)
+  toEntityId: string;
+  relation: string;                                  // V2 naming (vs v0.1.x's type)
+  attributes?: Record<string, AttributeValue>;
+  provenance: ProvenanceRecord[];
+}
+
+interface Conflict {                                 // PERSISTED (vs transient ConflictResult)
+  id: string;
+  entityId: string;
+  attribute: string;
+  values: AttributeValue[];                          // ≥2 contradictory values w/ provenance
+  status: 'open' | 'resolved';
+  resolutionRule?: 'most_recent' | 'majority' | 'manual' | null;
+  resolvedAtCycle?: number;
+  resolvedValue?: unknown;
+  createdAtCycle: number;
+}
+
+interface RealitySlice {
+  entities: Entity[];
+  relevantEdges: Edge[];
+  openConflicts: Conflict[];
+  rendered: string;                                  // pre-rendered text for substrate RealityLayer
+}
+```
+
+### V2 API on DataCube
+
+```typescript
+cube.getEntity(id)                                  // V2-shape Entity (alias for getById)
+cube.getStats()                                     // { entities, edges, openConflicts }
+cube.listConflicts(status?)                         // 'open' (default) | 'resolved' | 'all'
+cube.queryReality({ goal?, drive?, relevance? })    // Promise<RealitySlice>
+cube.ingest({ cycle, source, payload })             // Promise<IngestResult> — cycle-aware ingest
+cube.resolveConflict(id, rule, resolvedValue, cycle)
+```
+
+### Schema migration
+
+The v0.2.0 migration is idempotent and backwards-compatible:
+- Adds `created_at_cycle` (default -1) + `last_updated_cycle` (default -1) + `name` (default '') columns to `data_nodes` via `ALTER TABLE ADD COLUMN`. Existing rows continue to work; `getEntity` synthesizes attributes from `structured` with cycle=-1 sentinel for pre-V2 data.
+- Creates new `provenance` table for per-attribute provenance (entity_id, attribute, value_json, source, cycle, recorded_at).
+- Creates new `conflicts` table for persisted Conflict rows (id, entity_id, attribute, values_json, status, resolution_rule, resolved_at_cycle, resolved_value_json, created_at_cycle, created_at).
+
+### Conflict pipeline (FR-082)
+
+`DataCube.ingest({ cycle, source, payload })` runs the existing 5-stage pipeline (identify → normalize → relate → conflict → persist), then:
+1. Records per-attribute provenance for every structured field on the new/updated entity.
+2. Writes any field-level conflicts the existing `detectConflicts` stage produces as persisted `Conflict` rows. Conflicts with resolution `escalate` → status `'open'`; `new_wins`/`existing_wins` → status `'resolved'` with `resolutionRule='most_recent'` and `resolvedValue` set.
+3. Stamps cycle-aware metadata (`created_at_cycle` / `last_updated_cycle` / derived `name`) on the entity.
+
+The legacy `ConflictResult` (transient per-ingest output) is still produced by the pipeline and unchanged.
+
 ## Setup
 
 ```bash
@@ -100,9 +177,13 @@ Requires:
 ## Testing
 
 ```bash
-npm test                  # Database tests (no API key needed)
-npm run test:cube         # Data cube with embeddings (needs OPENAI_API_KEY)
-npm run test:pipeline     # Full pipeline (needs OPENAI_API_KEY)
+npm test                          # Full suite: 110 tests across 4 files (no API key needed)
+npm run test:database             # 31 tests — schema CRUD + insert/update/delete
+npm run test:cycle-aware          # 18 tests — V2-002 cycle-aware columns + provenance recording
+npm run test:conflict-persistence # 22 tests — V2-002 persisted Conflict CRUD + resolution
+npm run test:reality-slice        # 39 tests — V2-002 getEntity/getStats/listConflicts/queryReality
+npm run test:cube                 # Data cube with embeddings (needs OPENAI_API_KEY)
+npm run test:pipeline             # Full pipeline (needs OPENAI_API_KEY)
 ```
 
 ## File structure
