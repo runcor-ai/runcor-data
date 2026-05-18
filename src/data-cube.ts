@@ -223,6 +223,19 @@ export class DataCube {
    *   4. Stamps cycle-aware metadata (created_at_cycle / last_updated_cycle / name) on the entity.
    */
   async ingest(input: IngestInput): Promise<IngestResult> {
+    // ── V2-action-shape fast path ──
+    // Recognized V2 action sources skip the LLM pipeline and use deterministic
+    // code-based extraction. ~1ms per ingest, no JSON parse failures, real entities + edges.
+    // See src/v2-action-extractor.ts header for rationale.
+    const { isV2ActionSource, extractFromV2Action } = await import('./v2-action-extractor.js');
+    if (isV2ActionSource(input.source)) {
+      const extraction = extractFromV2Action(input.source, input.payload, input.cycle);
+      if (extraction !== null) {
+        return await this.persistExtraction(extraction, input);
+      }
+      // Unknown V2 action verb → fall through to LLM pipeline
+    }
+
     if (!this.model) {
       throw new Error('[runcor-data] DataCube.ingest requires a `model` to be configured (V2-shape pipeline).');
     }
@@ -310,6 +323,105 @@ export class DataCube {
     cycle: number,
   ): void {
     this.db.resolveConflict(conflictId, rule, resolvedValue, cycle);
+  }
+
+  // ── V2-action fast-path persistence ────────────────────────────────────
+  //
+  // Takes a code-extracted {entities, edges} and persists each, deduping entities
+  // by their stable `key` (structured.key field). Returns the primary entity as
+  // IngestResult.entity for API compat.
+
+  private async persistExtraction(
+    extraction: import('./v2-action-extractor.js').ExtractionResult,
+    input: IngestInput,
+  ): Promise<IngestResult> {
+    const { randomUUID } = await import('node:crypto');
+    const now = new Date().toISOString();
+    const keyToId = new Map<string, string>();
+
+    for (const ent of extraction.entities) {
+      // Dedup: look for existing node with this entity_type whose structured.key matches.
+      const existing = this.db.getNodesByType(ent.entity_type).find((n) => {
+        const s = n.structured;
+        return typeof s === 'object' && s !== null && (s as { key?: unknown }).key === ent.key;
+      });
+
+      if (existing) {
+        keyToId.set(ent.key, existing.id);
+        // Merge structured: new wins for non-undefined values; previous fields preserved otherwise.
+        const merged: Record<string, unknown> = { ...existing.structured };
+        for (const [k, v] of Object.entries(ent.structured)) {
+          if (v !== undefined) merged[k] = v;
+        }
+        this.db.updateNode(existing.id, {
+          structured: merged,
+          updated_at: now,
+          lastUpdatedCycle: input.cycle,
+          name: ent.name,
+        });
+      } else {
+        const id = randomUUID();
+        keyToId.set(ent.key, id);
+        const node = {
+          id,
+          entity_type: ent.entity_type,
+          content: ent.content,
+          structured: ent.structured,
+          embedding: [], // V2-action entities are structured; semantic search not the primary access pattern
+          confidence: 1.0, // deterministic extraction
+          source: {
+            origin: input.source,
+            path: '',
+            extracted_at: now,
+            method: 'v2-action-extract',
+          },
+          version: 1,
+          created_at: now,
+          updated_at: now,
+        };
+        this.db.insertNode(node, { cycle: input.cycle, name: ent.name });
+        this.db.insertProvenance({
+          entity_id: id,
+          attribute: '__init__',
+          value: { value: ent.name, source: input.source, cycle: input.cycle },
+        });
+        for (const [attr, val] of Object.entries(ent.structured)) {
+          this.db.insertProvenance({
+            entity_id: id,
+            attribute: attr,
+            value: { value: val, source: input.source, cycle: input.cycle },
+          });
+        }
+      }
+    }
+
+    // Persist edges
+    const persistedEdges: Edge[] = [];
+    for (const e of extraction.edges) {
+      const fromId = keyToId.get(e.from_key);
+      const toId = keyToId.get(e.to_key);
+      if (!fromId || !toId) continue;
+      const dataEdge = {
+        from_id: fromId,
+        to_id: toId,
+        type: e.type,
+        weight: e.weight,
+        evidence: e.evidence,
+        created_at: now,
+      };
+      this.db.insertEdge(dataEdge);
+      persistedEdges.push(this.dataEdgeToV2Edge(dataEdge));
+    }
+
+    // Primary entity is the first one (handler convention)
+    const primaryNode = this.db.getNode(keyToId.get(extraction.entities[0]!.key)!);
+    if (!primaryNode) throw new Error('persistExtraction: primary node not found after insert');
+
+    return {
+      entity: this.dataNodeToEntity(primaryNode),
+      edges: persistedEdges,
+      conflicts: [],
+    };
   }
 
   // ── V2 / v0.1 conversion helpers ──
